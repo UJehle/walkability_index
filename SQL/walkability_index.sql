@@ -310,7 +310,7 @@ DROP TABLE IF EXISTS lanes_buffer;
 CREATE TABLE lanes_buffer as
 SELECT ST_SUBDIVIDE(ST_BUFFER(w.geom,0.00015), 50) AS geom, lanes
 FROM edge w, planet_osm_polygon_bbox s 
-WHERE highway IN ('living_street','residential','secondary','secondary_link','tertiary','tertiary_link','primary','primary_link','trunk','motorway','service')
+WHERE w.highway IN ('living_street','residential','secondary','secondary_link','tertiary','tertiary_link','primary','primary_link','trunk','motorway','service')
 AND ST_Intersects(w.geom,s.geom)
 AND lanes IS NOT NULL; 
 
@@ -318,13 +318,16 @@ CREATE INDEX ON lanes_buffer USING GIST(geom);
 
 DROP TABLE IF EXISTS footpath_lanes;
 CREATE TEMP TABLE footpath_lanes AS 
-SELECT id, MAX(COALESCE(arr_polygon_attr[array_position(arr_shares, array_greatest(arr_shares))]::integer, 0)) AS lanes
+SELECT id, SUM(COALESCE(arr_polygon_attr[array_position(arr_shares, array_greatest(arr_shares))]::integer, 0)) AS lanes
 FROM edge_get_polygon_attr('lanes_buffer','lanes')
 GROUP BY id ;
 ALTER TABLE footpath_lanes ADD PRIMARY KEY(id); 
 
+ALTER TABLE edge
+ADD lanes_impact float8; 
+
 UPDATE edge f
-SET lanes = l.lanes 
+SET lanes_impact = l.lanes 
 FROM footpath_lanes l
 WHERE f.id = l.id; 
 
@@ -564,7 +567,7 @@ WHERE f.id = c.id;
 UPDATE edge f SET traffic_protection_standard = 
 round(group_index(
 	ARRAY[
-		select_weight_walkability_range('lanes',lanes,'standard'),
+		select_weight_walkability_range('lanes',lanes_impact,'standard'),
 		select_weight_walkability_range('maxspeed',maxspeed,'standard'),
 		select_weight_walkability_range('crossings',cnt_crossings,'standard'),
 		select_weight_walkability_range('accidents',cnt_accidents,'standard'),
@@ -595,7 +598,7 @@ WHERE traffic_protection_standard < 0;
 UPDATE edge f SET traffic_protection_senior = 
 round(group_index(
 	ARRAY[
-		select_weight_walkability_range('lanes',lanes,'senior'),
+		select_weight_walkability_range('lanes',lanes_impact,'senior'),
 		select_weight_walkability_range('maxspeed',maxspeed,'senior'),
 		select_weight_walkability_range('crossings',cnt_crossings,'senior'),
 		select_weight_walkability_range('accidents',cnt_accidents,'senior'),
@@ -626,7 +629,7 @@ WHERE traffic_protection_senior < 0;
 UPDATE edge f SET traffic_protection_child = 
 round(group_index(
 	ARRAY[
-		select_weight_walkability_range('lanes',lanes,'child'),
+		select_weight_walkability_range('lanes',lanes_impact,'child'),
 		select_weight_walkability_range('maxspeed',maxspeed,'child'),
 		select_weight_walkability_range('crossings',cnt_crossings,'child'),
 		select_weight_walkability_range('accidents',cnt_accidents,'child'),
@@ -657,7 +660,7 @@ WHERE traffic_protection_child < 0;
 UPDATE edge f SET traffic_protection_woman = 
 round(group_index(
 	ARRAY[
-		select_weight_walkability_range('lanes',lanes,'woman'),
+		select_weight_walkability_range('lanes',lanes_impact,'woman'),
 		select_weight_walkability_range('maxspeed',maxspeed,'woman'),
 		select_weight_walkability_range('crossings',cnt_crossings,'woman'),
 		select_weight_walkability_range('accidents',cnt_accidents,'woman'),
@@ -688,7 +691,7 @@ WHERE traffic_protection_woman < 0;
 UPDATE edge f SET traffic_protection_wheelchair = 
 round(group_index(
 	ARRAY[
-		select_weight_walkability_range('lanes',lanes,'wheelchair'),
+		select_weight_walkability_range('lanes',lanes_impact,'wheelchair'),
 		select_weight_walkability_range('maxspeed',maxspeed,'wheelchair'),
 		select_weight_walkability_range('crossings',cnt_crossings,'wheelchair'),
 		select_weight_walkability_range('accidents',cnt_accidents,'wheelchair'),
@@ -1426,7 +1429,7 @@ FROM weighting w
 WHERE f.id = w.id; 
 
 UPDATE edge f 
-SET data_quality = (22-num_nulls(sidewalk,incline_percent,surface,highway,lanes,maxspeed,cnt_crossings,parking,
+SET data_quality = (22-num_nulls(sidewalk,incline_percent,surface,highway,lanes_impact,maxspeed,cnt_crossings,parking,
 cnt_accidents,--noise_day,noise_night,
 lit_classified,covered,--vegetation,water,
 --population,pois,landuse,
