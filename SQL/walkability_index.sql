@@ -13,6 +13,8 @@ ALTER TABLE edge
     ADD COLUMN IF NOT EXISTS cnt_waste_baskets integer,
     ADD COLUMN IF NOT EXISTS cnt_fountains integer,
     ADD COLUMN IF NOT EXISTS cnt_toilets integer,
+	ADD COLUMN IF NOT EXISTS cnt_trees integer,
+	ADD COLUMN IF NOT EXISTS nature integer,
     ADD COLUMN IF NOT EXISTS population text,
     ADD COLUMN IF NOT EXISTS planet_osm_point_bboxtext text,
     ADD COLUMN IF NOT EXISTS landuse text[],
@@ -855,100 +857,203 @@ round(group_index(
 ----#####################################################GREEN & BLUE#############################################################----
 ----##########################################################################################################################----
 
--- DROP TABLE IF EXISTS green_ndvi_vec; 
--- CREATE TABLE green_ndvi_vec AS 
--- SELECT (ST_DUMPASPOLYGONS(rast)).geom, (ST_DUMPASPOLYGONS(rast)).val  
--- FROM green_ndvi;
+-- start with 0
 
--- ALTER TABLE green_ndvi_vec ADD COLUMN gid serial; 
--- ALTER TABLE green_ndvi_vec ADD PRIMARY KEY(gid);
--- CREATE INDEX ON green_ndvi_vec USING GIST(geom);
+UPDATE edge f 
+SET nature = 0;   
+   
+-- add score for trees
+DROP TABLE IF EXISTS trees;
+CREATE TEMP TABLE trees AS 	
+SELECT geom 
+FROM vegetation_points;
 
--- DO $$
--- 	DECLARE 
---     	buffer float := meter_degree() * 15;
---     BEGIN 
+CREATE INDEX ON trees USING GIST(geom);
 
--- 		DROP TABLE IF EXISTS footpaths_green_ndvi;
--- 		CREATE TEMP TABLE footpaths_green_ndvi AS  
--- 		SELECT f.id, 
--- 		CASE WHEN j.avg_green_ndvi < 0 THEN 0::integer ELSE COALESCE((j.avg_green_ndvi * 100)::integer,0) END AS avg_green_ndvi
--- 		FROM edge f
--- 		CROSS JOIN LATERAL 
--- 		(
--- 			SELECT AVG(val) AS avg_green_ndvi
--- 			FROM green_ndvi_vec g
--- 			WHERE ST_DWITHIN(f.geom, g.geom, buffer)
--- 		) j;
+WITH cnt_table AS 
+(
+	SELECT f.id, COALESCE(points_sum,0) AS points_sum 
+	FROM edge f 
+	LEFT JOIN edge_get_points_sum('trees', 30) c
+	ON f.id = c.id 	
+)
+UPDATE edge f
+SET cnt_trees = points_sum 
+FROM cnt_table c
+WHERE f.id = c.id;
 
--- 		ALTER TABLE footpaths_green_ndvi ADD PRIMARY KEY(id);
--- 	END; 
--- $$;
+UPDATE edge f 
+SET nature = nature + cnt_trees*20 ;   
 
--- UPDATE edge f 
--- SET vegetation = g.avg_green_ndvi 
--- FROM footpaths_green_ndvi g
--- WHERE f.id = g.id;
+-- add score for tree rows 
+DROP TABLE IF EXISTS tree_row_buffer;
+CREATE TABLE tree_row_buffer as
+SELECT ST_SUBDIVIDE(ST_BUFFER(v.geom,0.00015), 50) AS geom
+FROM vegetation_lines v, bbox b
+WHERE v.natural IN ('tree_row')
+AND ST_Intersects(v.geom,b.geom); 
 
--- /*Coputing rank for water. These queries still don't scale for larger study areas.*/
--- DROP TABLE IF EXISTS buffer_water_large;
--- CREATE TABLE buffer_water_large as
--- SELECT ST_SUBDIVIDE(ST_UNION(ST_BUFFER(way::geography, 50)::geometry), 50) AS geom, 'water' AS water 
--- FROM planet_osm_polygon 
--- WHERE (water IS NOT NULL 
--- OR ("natural" = 'water' AND water IS NULL))
--- AND ST_AREA(way::geography) > 30000
--- AND (water <> 'wastewater' OR water IS NULL);
+CREATE INDEX ON tree_row_buffer USING GIST(geom);
 
--- CREATE INDEX ON buffer_water_large USING gist(geom);
+DROP TABLE IF EXISTS intersect_tree_row;
+CREATE TEMP TABLE intersect_tree_row AS 	
+SELECT e.id
+FROM edge e, tree_row_buffer t
+WHERE ST_Intersects(e.geom,t.geom); 
 
--- DROP TABLE IF EXISTS buffer_water_small;
--- CREATE TABLE buffer_water_small AS
--- SELECT ST_SUBDIVIDE(ST_UNION(geom), 50) AS geom, 'water' AS water
--- FROM 
--- (
--- 	SELECT ST_UNION(ST_BUFFER(way::geography, 25)::geometry) AS geom 
--- 	FROM planet_osm_polygon 
--- 	WHERE (water IS NOT NULL 
--- 	OR ("natural" = 'water' AND water IS NULL))
--- 	AND ST_AREA(way::geography) < 30000
--- 	AND (water <> 'wastewater' OR water IS NULL)
--- 	UNION ALL 
--- 	SELECT ST_UNION(ST_BUFFER(way::geography, 25)::geometry) AS geom 
--- 	FROM planet_osm_line 
--- 	WHERE waterway IS NOT NULL
--- ) w;
+WITH intersect_tree_row AS 
+(
+	SELECT e.id
+	FROM edge e, tree_row_buffer t
+	WHERE ST_Intersects(e.geom,t.geom)
+)
+UPDATE edge f 
+SET nature = nature + 70
+FROM intersect_tree_row i
+WHERE f.id = i.id;
 
--- CREATE INDEX ON buffer_water_small USING gist(geom);
+-- add score for hedges
+DROP TABLE IF EXISTS hedge_buffer;
+CREATE TABLE hedge_buffer as
+SELECT ST_SUBDIVIDE(ST_BUFFER(v.geom,0.00015), 50) AS geom
+FROM vegetation_lines v, bbox b
+WHERE v.barrier IN ('hedge')
+AND ST_Intersects(v.geom,b.geom); 
 
--- DROP TABLE IF EXISTS water_rank;
--- CREATE TABLE water_rank AS 
--- SELECT id, arr_shares[1] * 100 AS water_rank 
--- FROM edge_get_polygon_attr('buffer_water_large','water')
--- WHERE arr_polygon_attr IS NOT NULL; 
+CREATE INDEX ON hedge_buffer USING GIST(geom);
 
--- INSERT INTO water_rank 
--- SELECT id, arr_shares[1] * 50 AS water_rank 
--- FROM edge_get_polygon_attr('buffer_water_small','water')
--- WHERE arr_polygon_attr IS NOT NULL; 
+DROP TABLE IF EXISTS intersect_hedge_buffer;
+CREATE TEMP TABLE intersect_hedge_buffer AS 	
+SELECT e.id
+FROM edge e, hedge_buffer h
+WHERE ST_Intersects(e.geom,h.geom); 
 
--- WITH grouped_rank AS 
--- (
--- 	SELECT id, CASE WHEN SUM(water_rank) > 100 THEN 100 ELSE sum(water_rank) END AS water_rank  
--- 	FROM water_rank 
--- 	GROUP BY id 
--- )
--- UPDATE edge f
--- SET water = g.water_rank 
--- FROM grouped_rank g
--- WHERE g.id = f.id; 
+WITH intersect_hedge_buffer AS 
+(
+	SELECT e.id
+	FROM edge e, hedge_buffer h
+	WHERE ST_Intersects(e.geom,h.geom)
+)
+UPDATE edge f 
+SET nature = nature + 20
+FROM intersect_tree_row i
+WHERE f.id = i.id;
 
--- UPDATE edge 
--- SET green_blue_index = COALESCE(water,0) + (CASE WHEN vegetation > 75 THEN 100 ELSE vegetation END);
+-- add score for canals
+DROP TABLE IF EXISTS canal_buffer;
+CREATE TABLE canal_buffer as
+SELECT ST_SUBDIVIDE(ST_BUFFER(v.geom,0.00015), 50) AS geom
+FROM vegetation_lines v, bbox b
+WHERE v.waterway IN ('canal')
+AND ST_Intersects(v.geom,b.geom); 
 
--- UPDATE edge 
--- SET green_blue_index = 100 
--- WHERE green_blue_index > 100;
+CREATE INDEX ON canal_buffer USING GIST(geom);
+
+DROP TABLE IF EXISTS intersect_canal;
+CREATE TEMP TABLE intersect_canal AS 	
+SELECT e.id
+FROM edge e, canal_buffer c
+WHERE ST_Intersects(e.geom,c.geom); 
+
+WITH intersect_canal AS 
+(
+	SELECT e.id
+	FROM edge e, canal_buffer c
+	WHERE ST_Intersects(e.geom,c.geom)
+)
+UPDATE edge f 
+SET nature = nature + 20
+FROM intersect_canal i
+WHERE f.id = i.id;
+
+-- add score for rivers
+DROP TABLE IF EXISTS river_buffer;
+CREATE TABLE river_buffer as
+SELECT ST_SUBDIVIDE(ST_BUFFER(v.geom,0.00050), 50) AS geom
+FROM vegetation_lines v, bbox b
+WHERE v.waterway IN ('river')
+AND ST_Intersects(v.geom,b.geom); 
+
+CREATE INDEX ON river_buffer USING GIST(geom);
+
+DROP TABLE IF EXISTS intersect_river;
+CREATE TEMP TABLE intersect_river AS 	
+SELECT e.id
+FROM edge e, river_buffer c
+WHERE ST_Intersects(e.geom,c.geom); 
+
+WITH intersect_river AS 
+(
+	SELECT e.id
+	FROM edge e, river_buffer c
+	WHERE ST_Intersects(e.geom,c.geom)
+)
+UPDATE edge f 
+SET nature = nature + 40
+FROM intersect_river i
+WHERE f.id = i.id;
+
+-- add score for scrubs
+DROP TABLE IF EXISTS scrub_buffer;
+CREATE TABLE scrub_buffer as
+SELECT ST_SUBDIVIDE(ST_BUFFER(v.geom,0.00015), 50) AS geom
+FROM vegetation_polygons v, bbox b
+WHERE v.natural IN ('scrub')
+AND ST_Intersects(v.geom,b.geom); 
+
+CREATE INDEX ON scrub_buffer USING GIST(geom);
+
+DROP TABLE IF EXISTS intersect_scrub;
+CREATE TEMP TABLE intersect_scrub AS 	
+SELECT e.id
+FROM edge e, scrub_buffer c
+WHERE ST_Intersects(e.geom,c.geom); 
+
+WITH intersect_scrub AS 
+(
+	SELECT e.id
+	FROM edge e, scrub_buffer c
+	WHERE ST_Intersects(e.geom,c.geom)
+)
+UPDATE edge f 
+SET nature = nature + 10
+FROM intersect_scrub i
+WHERE f.id = i.id;
+
+
+-- add score for parks
+DROP TABLE IF EXISTS park_buffer;
+CREATE TABLE park_buffer as
+SELECT ST_SUBDIVIDE(ST_BUFFER(v.geom,0.00015), 50) AS geom
+FROM vegetation_polygons v, bbox b
+WHERE v.leisure IN ('park')
+AND ST_Intersects(v.geom,b.geom); 
+
+CREATE INDEX ON park_buffer USING GIST(geom);
+
+DROP TABLE IF EXISTS intersect_park;
+CREATE TEMP TABLE intersect_park AS 	
+SELECT e.id
+FROM edge e, park_buffer c
+WHERE ST_Intersects(e.geom,c.geom); 
+
+WITH intersect_park AS 
+(
+	SELECT e.id
+	FROM edge e, park_buffer c
+	WHERE ST_Intersects(e.geom,c.geom)
+)
+UPDATE edge f 
+SET nature = nature + 50
+FROM intersect_park i
+WHERE f.id = i.id;
+
+-- limit score to 100
+UPDATE edge f 
+SET nature = 100
+WHERE nature > 100;
+
+
 
 ----##########################################################################################################################----
 ----#####################################################WALKING ENVIRONMENT##################################################----
@@ -1095,15 +1200,17 @@ round(group_index(
 	ARRAY[
 		l.value::NUMERIC, 
 		select_weight_walkability('population',population,'standard'),
+		select_weight_walkability_range('nature',nature,'standard'),
 		select_weight_walkability('pois',pois,'standard')
 	],
 	ARRAY[
 		select_full_weight_walkability('landuse','standard'),
 		select_full_weight_walkability('population','standard'),
+		select_full_weight_walkability('nature','standard'),
 		select_full_weight_walkability('pois','standard')
 	]
 ),0)
-FROM landuse_values l  
+FROM landuse_values l 
 WHERE f.id = l.id;
 
 -- calculate score -- SENIOR
@@ -1119,15 +1226,17 @@ round(group_index(
 	ARRAY[
 		l.value::NUMERIC, 
 		select_weight_walkability('population',population,'senior'),
+		select_weight_walkability_range('nature',nature,'senior'),
 		select_weight_walkability('pois',pois,'senior')
 	],
 	ARRAY[
 		select_full_weight_walkability('landuse','senior'),
 		select_full_weight_walkability('population','senior'),
+		select_full_weight_walkability('nature','senior'),
 		select_full_weight_walkability('pois','senior')
 	]
 ),0)
-FROM landuse_values l  
+FROM landuse_values l 
 WHERE f.id = l.id;
 
 -- calculate score -- CHILD
@@ -1143,11 +1252,13 @@ round(group_index(
 	ARRAY[
 		l.value::NUMERIC, 
 		select_weight_walkability('population',population,'child'),
+		select_weight_walkability_range('nature',nature,'child'),
 		select_weight_walkability('pois',pois,'child')
 	],
 	ARRAY[
 		select_full_weight_walkability('landuse','child'),
 		select_full_weight_walkability('population','child'),
+		select_full_weight_walkability('nature','child'),
 		select_full_weight_walkability('pois','child')
 	]
 ),0)
@@ -1167,11 +1278,13 @@ round(group_index(
 	ARRAY[
 		l.value::NUMERIC, 
 		select_weight_walkability('population',population,'wheelchair'),
+		select_weight_walkability_range('nature',nature,'wheelchair'),
 		select_weight_walkability('pois',pois,'wheelchair')
 	],
 	ARRAY[
 		select_full_weight_walkability('landuse','wheelchair'),
 		select_full_weight_walkability('population','wheelchair'),
+		select_full_weight_walkability('nature','wheelchair'),
 		select_full_weight_walkability('pois','wheelchair')
 	]
 ),0)
@@ -1191,11 +1304,13 @@ round(group_index(
 	ARRAY[
 		l.value::NUMERIC, 
 		select_weight_walkability('population',population,'woman'),
+		select_weight_walkability_range('nature',nature,'woman'),
 		select_weight_walkability('pois',pois,'woman')
 	],
 	ARRAY[
 		select_full_weight_walkability('landuse','woman'),
 		select_full_weight_walkability('population','woman'),
+		select_full_weight_walkability('nature','woman'),
 		select_full_weight_walkability('pois','woman')
 	]
 ),0)
@@ -1411,11 +1526,11 @@ WHERE urban_equipment_wheelchair IS NULL;
 -- calcualtion -- STANDARD
 WITH weighting AS
 (
-	SELECT id, CASE WHEN urban_equipment_standard IS NULL THEN 0 ELSE 0.05 END AS urban_equipment_weight,
-	CASE WHEN security_standard IS NULL THEN 0 ELSE 0.15 END AS security_weight,
-	CASE WHEN traffic_protection_standard IS NULL THEN 0 ELSE 0.15 END AS traffic_protection_weight,
-	CASE WHEN sidewalk_quality_standard IS NULL THEN 0 ELSE 0.15 END AS sidewalk_quality_weight,
-	CASE WHEN liveliness_standard IS NULL THEN 0 ELSE 0.15 END AS liveliness_weight     
+	SELECT id, CASE WHEN urban_equipment_standard IS NULL THEN 0 ELSE 0.04 END AS urban_equipment_weight,
+	CASE WHEN security_standard IS NULL THEN 0 ELSE 0.14 END AS security_weight,
+	CASE WHEN traffic_protection_standard IS NULL THEN 0 ELSE 0.22 END AS traffic_protection_weight,
+	CASE WHEN sidewalk_quality_standard IS NULL THEN 0 ELSE 0.28 END AS sidewalk_quality_weight,
+	CASE WHEN liveliness_standard IS NULL THEN 0 ELSE 0.10 END AS liveliness_weight     
 	FROM edge 
 )
 UPDATE edge f
