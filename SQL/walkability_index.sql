@@ -320,7 +320,7 @@ CREATE INDEX ON lanes_buffer USING GIST(geom);
 
 DROP TABLE IF EXISTS footpath_lanes;
 CREATE TEMP TABLE footpath_lanes AS 
-SELECT id, SUM(COALESCE(arr_polygon_attr[array_position(arr_shares, array_greatest(arr_shares))]::integer, 0)) AS lanes
+SELECT id, SUM(COALESCE(arr_polygon_attr[array_position(arr_shares, array_greatest(arr_shares))]::integer,0)) AS lanes
 FROM edge_get_polygon_attr('lanes_buffer','lanes')
 GROUP BY id ;
 ALTER TABLE footpath_lanes ADD PRIMARY KEY(id); 
@@ -342,7 +342,7 @@ DROP TABLE IF EXISTS maxspeed_buffer;
 CREATE TEMP TABLE maxspeed_buffer as
 SELECT ST_SUBDIVIDE(ST_BUFFER(w.geom,0.00015), 50) AS geom, maxspeed_backward AS maxspeed
 FROM edge w, planet_osm_polygon_bbox s 
-WHERE highway IN ('living_street','residential','secondary','secondary_link','tertiary','tertiary_link','primary','primary_link','trunk','motorway','service')
+WHERE w.highway IN ('living_street','residential','secondary','secondary_link','tertiary','tertiary_link','primary','primary_link','trunk','motorway','service')
 AND ST_Intersects(w.geom,s.geom)
 AND maxspeed_backward IS NOT NULL; 
 
@@ -452,7 +452,7 @@ WHERE crossing IN ('zebra','traffic_signals');
 
 CREATE INDEX ON relevant_crossings USING GIST(geom);
 
-/*Assing number of crossing to edge*/
+/*Adding number of crossing to edge*/
 ALTER TABLE edge DROP COLUMN IF EXISTS cnt_crossings;
 ALTER TABLE edge ADD COLUMN cnt_crossings int; 
 WITH cnt_table AS 
