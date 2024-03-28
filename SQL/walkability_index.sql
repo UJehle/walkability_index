@@ -1589,7 +1589,7 @@ FROM weighting w
 WHERE f.id = w.id; 
 
 UPDATE edge 
-SET walkability_senior = (walkability_senior - 40) / 0.60;
+SET walkability_senior = (walkability_senior - 30) / 0.7;
 
 UPDATE edge 
 SET walkability_senior = 1 
@@ -1627,7 +1627,7 @@ FROM weighting w
 WHERE f.id = w.id; 
 
 UPDATE edge 
-SET walkability_child = (walkability_child - 40) / 0.60;
+SET walkability_child = (walkability_child - 30) / 0.7;
 
 UPDATE edge 
 SET walkability_child = 1 
@@ -1665,7 +1665,7 @@ FROM weighting w
 WHERE f.id = w.id; 
 
 UPDATE edge 
-SET walkability_woman = (walkability_woman - 40) / 0.60;
+SET walkability_woman = (walkability_woman - 30) / 0.7;
 
 UPDATE edge 
 SET walkability_woman = 1 
@@ -1703,7 +1703,7 @@ FROM weighting w
 WHERE f.id = w.id; 
 
 UPDATE edge 
-SET walkability_wheelchair = (walkability_wheelchair - 40) / 0.60;
+SET walkability_wheelchair = (walkability_wheelchair - 30) / 0.7;
 
 UPDATE edge 
 SET walkability_wheelchair = 1 
