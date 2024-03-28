@@ -3,8 +3,9 @@
 1. import walkability.csv to database (via DBeaver)
 2. create the walkability functions
 3. run "street_furniture.sql"
-4. run "footpath_preparation.sql"
-5. run "walkabilty_index.sql"
+4. run "vegetation.sql"
+5. run "footpath_preparation.sql"
+6. run "walkabilty_index.sql"
 
 # Input files
 As an input, the following datasets are needed:
